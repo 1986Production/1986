@@ -303,6 +303,72 @@
         const grids = Array.from(document.querySelectorAll(".popular-grid-scroll"));
         if (!grids.length) return;
         const clamped = new WeakSet();
+        const dragThreshold = 6;
+        const dragReleaseDelay = 160;
+
+        const attachTouchDrag = (scrollContainer) => {
+          if (scrollContainer.dataset.touchDrag === "true") return;
+          scrollContainer.dataset.touchDrag = "true";
+
+          let startX = 0;
+          let startY = 0;
+          let startScrollLeft = 0;
+          let isDragging = false;
+          let dragTimer;
+
+          const clearDragging = () => {
+            if (dragTimer) clearTimeout(dragTimer);
+            if (scrollContainer.dataset.dragging === "true") {
+              dragTimer = setTimeout(() => {
+                scrollContainer.removeAttribute("data-dragging");
+              }, dragReleaseDelay);
+            }
+            isDragging = false;
+          };
+
+          scrollContainer.addEventListener(
+            "touchstart",
+            (event) => {
+              if (event.touches.length !== 1) return;
+              startX = event.touches[0].clientX;
+              startY = event.touches[0].clientY;
+              startScrollLeft = scrollContainer.scrollLeft;
+              isDragging = false;
+              if (dragTimer) clearTimeout(dragTimer);
+              scrollContainer.removeAttribute("data-dragging");
+            },
+            { passive: true }
+          );
+
+          scrollContainer.addEventListener(
+            "touchmove",
+            (event) => {
+              if (event.touches.length !== 1) return;
+              const deltaX = event.touches[0].clientX - startX;
+              const deltaY = event.touches[0].clientY - startY;
+
+              if (!isDragging) {
+                if (
+                  Math.abs(deltaX) < dragThreshold ||
+                  Math.abs(deltaX) <= Math.abs(deltaY)
+                ) {
+                  return;
+                }
+                isDragging = true;
+                scrollContainer.dataset.dragging = "true";
+              }
+
+              event.preventDefault();
+              scrollContainer.scrollLeft = startScrollLeft - deltaX;
+            },
+            { passive: false }
+          );
+
+          scrollContainer.addEventListener("touchend", clearDragging, { passive: true });
+          scrollContainer.addEventListener("touchcancel", clearDragging, { passive: true });
+        };
+
+        grids.forEach((scrollContainer) => attachTouchDrag(scrollContainer));
 
         const syncEdgePadding = (scrollContainer) => {
           const grid = scrollContainer.querySelector(".popular-grid");
@@ -487,6 +553,13 @@
           card.addEventListener(
             "click",
             (event) => {
+              const scrollParent = card.closest(".popular-grid-scroll");
+              if (scrollParent?.dataset.dragging === "true") {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                return;
+              }
               event.preventDefault();
               event.stopPropagation();
               event.stopImmediatePropagation();
