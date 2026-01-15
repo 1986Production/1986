@@ -308,6 +308,38 @@
         const momentumFriction = 0.003;
         const momentumMinVelocity = 0.02;
         const momentumMaxVelocity = 2.4;
+        const snapRestoreDelay = 240;
+
+        const shouldSnapToCard = () =>
+          window.matchMedia("(max-width: 1024px)").matches;
+
+        const snapToNearestCard = (scrollContainer) => {
+          if (!shouldSnapToCard()) return;
+          const cards = scrollContainer.querySelectorAll(".popular-card");
+          if (!cards.length) return;
+
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const containerCenter = containerRect.left + containerRect.width / 2;
+          let closestDelta = null;
+          let minDistance = Infinity;
+
+          cards.forEach((card) => {
+            const cardRect = card.getBoundingClientRect();
+            const cardCenter = cardRect.left + cardRect.width / 2;
+            const delta = cardCenter - containerCenter;
+            const distance = Math.abs(delta);
+            if (distance < minDistance) {
+              minDistance = distance;
+              closestDelta = delta;
+            }
+          });
+
+          if (closestDelta === null || minDistance < 1) return;
+          scrollContainer.scrollTo({
+            left: scrollContainer.scrollLeft + closestDelta,
+            behavior: "smooth",
+          });
+        };
 
         const attachTouchDrag = (scrollContainer) => {
           if (scrollContainer.dataset.touchDrag === "true") return;
@@ -318,6 +350,8 @@
           let startScrollLeft = 0;
           let isDragging = false;
           let dragTimer;
+          let snapTimer;
+          let wasDragging = false;
           let lastX = 0;
           let lastTime = 0;
           let velocity = 0;
@@ -328,13 +362,35 @@
             momentumId = null;
           };
 
-          const startMomentum = (initialVelocity) => {
+          const scheduleSnapRestore = () => {
+            if (snapTimer) clearTimeout(snapTimer);
+            snapTimer = setTimeout(() => {
+              scrollContainer.style.removeProperty("scroll-snap-type");
+            }, snapRestoreDelay);
+          };
+
+          const finishDrag = () => {
+            if (wasDragging) snapToNearestCard(scrollContainer);
+            scheduleSnapRestore();
+            if (dragTimer) clearTimeout(dragTimer);
+            if (scrollContainer.dataset.dragging === "true") {
+              dragTimer = setTimeout(() => {
+                scrollContainer.removeAttribute("data-dragging");
+              }, dragReleaseDelay);
+            }
+            wasDragging = false;
+          };
+
+          const startMomentum = (initialVelocity, onComplete) => {
             let currentVelocity = Math.max(
               -momentumMaxVelocity,
               Math.min(momentumMaxVelocity, initialVelocity)
             );
 
-            if (Math.abs(currentVelocity) < momentumMinVelocity) return;
+            if (Math.abs(currentVelocity) < momentumMinVelocity) {
+              onComplete?.();
+              return;
+            }
 
             let lastFrame = performance.now();
             const step = (now) => {
@@ -367,20 +423,11 @@
                 momentumId = requestAnimationFrame(step);
               } else {
                 momentumId = null;
+                onComplete?.();
               }
             };
 
             momentumId = requestAnimationFrame(step);
-          };
-
-          const clearDragging = () => {
-            if (dragTimer) clearTimeout(dragTimer);
-            if (scrollContainer.dataset.dragging === "true") {
-              dragTimer = setTimeout(() => {
-                scrollContainer.removeAttribute("data-dragging");
-              }, dragReleaseDelay);
-            }
-            isDragging = false;
           };
 
           scrollContainer.addEventListener(
@@ -388,6 +435,7 @@
             (event) => {
               if (event.touches.length !== 1) return;
               stopMomentum();
+              if (snapTimer) clearTimeout(snapTimer);
               startX = event.touches[0].clientX;
               startY = event.touches[0].clientY;
               startScrollLeft = scrollContainer.scrollLeft;
@@ -395,6 +443,7 @@
               lastTime = performance.now();
               velocity = 0;
               isDragging = false;
+              wasDragging = false;
               if (dragTimer) clearTimeout(dragTimer);
               scrollContainer.removeAttribute("data-dragging");
             },
@@ -416,7 +465,9 @@
                   return;
                 }
                 isDragging = true;
+                wasDragging = true;
                 scrollContainer.dataset.dragging = "true";
+                scrollContainer.style.scrollSnapType = "none";
                 lastX = event.touches[0].clientX;
                 lastTime = performance.now();
                 velocity = 0;
@@ -442,8 +493,12 @@
           scrollContainer.addEventListener(
             "touchend",
             () => {
-              if (isDragging) startMomentum(velocity);
-              clearDragging();
+              if (isDragging) {
+                startMomentum(velocity, finishDrag);
+              } else {
+                finishDrag();
+              }
+              isDragging = false;
             },
             { passive: true }
           );
@@ -451,7 +506,8 @@
             "touchcancel",
             () => {
               stopMomentum();
-              clearDragging();
+              finishDrag();
+              isDragging = false;
             },
             { passive: true }
           );
