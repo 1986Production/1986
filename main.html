@@ -305,6 +305,9 @@
         const clamped = new WeakSet();
         const dragThreshold = 6;
         const dragReleaseDelay = 160;
+        const momentumFriction = 0.003;
+        const momentumMinVelocity = 0.02;
+        const momentumMaxVelocity = 2.4;
 
         const attachTouchDrag = (scrollContainer) => {
           if (scrollContainer.dataset.touchDrag === "true") return;
@@ -315,6 +318,60 @@
           let startScrollLeft = 0;
           let isDragging = false;
           let dragTimer;
+          let lastX = 0;
+          let lastTime = 0;
+          let velocity = 0;
+          let momentumId = null;
+
+          const stopMomentum = () => {
+            if (momentumId) cancelAnimationFrame(momentumId);
+            momentumId = null;
+          };
+
+          const startMomentum = (initialVelocity) => {
+            let currentVelocity = Math.max(
+              -momentumMaxVelocity,
+              Math.min(momentumMaxVelocity, initialVelocity)
+            );
+
+            if (Math.abs(currentVelocity) < momentumMinVelocity) return;
+
+            let lastFrame = performance.now();
+            const step = (now) => {
+              const dt = now - lastFrame;
+              lastFrame = now;
+              if (dt <= 0) {
+                momentumId = requestAnimationFrame(step);
+                return;
+              }
+
+              const maxScroll = scrollContainer.scrollWidth - scrollContainer.clientWidth;
+              let next = scrollContainer.scrollLeft + currentVelocity * dt;
+
+              if (maxScroll <= 0) {
+                next = 0;
+                currentVelocity = 0;
+              } else if (next < 0 || next > maxScroll) {
+                next = Math.max(0, Math.min(maxScroll, next));
+                currentVelocity = 0;
+              } else {
+                const decel = momentumFriction * dt * Math.sign(currentVelocity);
+                const updatedVelocity = currentVelocity - decel;
+                currentVelocity =
+                  Math.abs(updatedVelocity) < momentumMinVelocity ? 0 : updatedVelocity;
+              }
+
+              scrollContainer.scrollLeft = next;
+
+              if (Math.abs(currentVelocity) >= momentumMinVelocity) {
+                momentumId = requestAnimationFrame(step);
+              } else {
+                momentumId = null;
+              }
+            };
+
+            momentumId = requestAnimationFrame(step);
+          };
 
           const clearDragging = () => {
             if (dragTimer) clearTimeout(dragTimer);
@@ -330,9 +387,13 @@
             "touchstart",
             (event) => {
               if (event.touches.length !== 1) return;
+              stopMomentum();
               startX = event.touches[0].clientX;
               startY = event.touches[0].clientY;
               startScrollLeft = scrollContainer.scrollLeft;
+              lastX = startX;
+              lastTime = performance.now();
+              velocity = 0;
               isDragging = false;
               if (dragTimer) clearTimeout(dragTimer);
               scrollContainer.removeAttribute("data-dragging");
@@ -356,7 +417,21 @@
                 }
                 isDragging = true;
                 scrollContainer.dataset.dragging = "true";
+                lastX = event.touches[0].clientX;
+                lastTime = performance.now();
+                velocity = 0;
               }
+
+              const now = performance.now();
+              const moveX = event.touches[0].clientX;
+              const dx = moveX - lastX;
+              const dt = now - lastTime;
+              if (dt > 0) {
+                const instantVelocity = -dx / dt;
+                velocity = velocity * 0.7 + instantVelocity * 0.3;
+              }
+              lastX = moveX;
+              lastTime = now;
 
               event.preventDefault();
               scrollContainer.scrollLeft = startScrollLeft - deltaX;
@@ -364,8 +439,22 @@
             { passive: false }
           );
 
-          scrollContainer.addEventListener("touchend", clearDragging, { passive: true });
-          scrollContainer.addEventListener("touchcancel", clearDragging, { passive: true });
+          scrollContainer.addEventListener(
+            "touchend",
+            () => {
+              if (isDragging) startMomentum(velocity);
+              clearDragging();
+            },
+            { passive: true }
+          );
+          scrollContainer.addEventListener(
+            "touchcancel",
+            () => {
+              stopMomentum();
+              clearDragging();
+            },
+            { passive: true }
+          );
         };
 
         grids.forEach((scrollContainer) => attachTouchDrag(scrollContainer));
